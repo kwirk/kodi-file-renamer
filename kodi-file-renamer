@@ -1,0 +1,249 @@
+#!/usr/bin/env python
+#
+# kodi-file-renamer - Rename files based on Kodi database.
+# Copyright (C) 2015  Steven Hiscocks
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+from __future__ import print_function
+import sys
+import os
+import sqlite3
+
+__version__ = '1.0'
+__license__ = 'GPLv3'
+
+
+def rename_movies(con, dryrun=False):
+    for idMovie, title, year, idFile, filename, filepath in con.execute(
+            "SELECT idMovie, c00, c07, idFile, strFilename, strPath FROM "
+            "movie JOIN files USING (idFile) JOIN path USING (idPath)"):
+
+        fileext = os.path.splitext(filename)[1]
+        # Only '/' and NUL invalid on ext filesystem
+        # Assuming NUL character wouldn't be in title
+        newfilename = ("%s (%s)%s" % (title, year, fileext)).replace('/', '_')
+        if filename == newfilename:
+            # No need to rename
+            continue
+        fullfilepath = os.path.join(filepath, filename)
+        newfullfilepath = os.path.join(filepath, newfilename)
+        if os.path.exists(newfullfilepath):
+            print("New file path exists: %s -> %s" % (
+                fullfilepath, newfullfilepath), file=sys.stderr)
+            continue
+
+        # Check for dry run.
+        if not dryrun:
+            try:
+                # Attempt rename
+                os.rename(fullfilepath, newfullfilepath)
+            except OSError:
+                print("Error renaming file: %s -> %s" % (
+                      fullfilepath, newfullfilepath), file=sys.stderr)
+                continue
+
+            cur = con.cursor()
+            try:
+                # Update filename in files table
+                cur.execute(
+                    "UPDATE files SET strFilename=? WHERE idFile=?",
+                    (newfilename, idFile))
+                # Update filepath in movie table
+                cur.execute(
+                    "UPDATE movie SET c22=? WHERE idMovie=?",
+                    (newfullfilepath, idMovie))
+                con.commit()
+            except sqlite3.Error:
+                print("Error updating database: %s -> %s" % (
+                    fullfilepath, newfullfilepath), file=sys.stderr)
+                con.rollback()
+                try:
+                    # Attempt to undo rename
+                    os.rename(newfullfilepath, fullfilepath)
+                except OSError:
+                    raise RuntimeError(
+                        "Database not updated and error undoing rename: "
+                        "%s -> %s" % (fullfilepath, newfullfilepath))
+                continue
+            finally:
+                cur.close()
+        # Only output rename when successful.
+        print("%s -> %s" % (fullfilepath, newfullfilepath))
+
+
+def rename_tvshows(con, dryrun=False):
+    for idShow, title, idPath, path in con.execute(
+            "SELECT idShow, c00, idPath, strPath FROM tvshow JOIN "
+            "tvshowlinkpath USING (idShow) JOIN path USING (idPath)"):
+
+        path = os.path.normpath(path)
+        basepath, endpath = os.path.split(path)
+        # Only '/' and NUL invalid on ext filesystem
+        # Assuming NUL character wouldn't be in title
+        newendpath = title.replace('/', '_')
+        if endpath == newendpath:
+            # No need to rename
+            continue
+        newpath = os.path.join(basepath, newendpath)
+        if os.path.exists(newpath):
+            print("New folder exists: %s -> %s" % (path, newpath),
+                  file=sys.stderr)
+            continue
+
+        # Check for dry run.
+        if not dryrun:
+            try:
+                # Attempt rename
+                os.rename(path, newpath)
+            except OSError:
+                print("Error renaming folder: %s -> %s" % (path, newpath),
+                      file=sys.stderr)
+                continue
+
+            cur = con.cursor()
+            try:
+                # Update path in path table
+                # Use os.path.join to add trailing slash
+                cur.execute(
+                    "UPDATE path SET strPath=? WHERE idPath=?",
+                    (os.path.join(newpath, ''), idPath))
+                # Update path for episodes in path table
+                cur.execute(
+                    "UPDATE path SET strPath = REPLACE(strPath, ?, ?) WHERE "
+                    "idPath IN (SELECT idPath FROM files JOIN episode USING "
+                    "(idFile) WHERE idShow = ?)",
+                    (path, newpath, idShow))
+                # Update filepath text for episodes
+                cur.execute("UPDATE episode SET c18 = REPLACE(c18, ?, ?) "
+                            "WHERE idShow = ?",
+                            (path, newpath, idShow))
+                con.commit()
+            except sqlite3.Error:
+                print("Error updating database: %s -> %s" % (path, newpath),
+                      file=sys.stderr)
+                con.rollback()
+                try:
+                    # Attempt to undo rename
+                    os.rename(newpath, path)
+                except OSError:
+                    raise RuntimeError(
+                        "Database not updated and error undoing rename: "
+                        "%s -> %s" % (path, newpath))
+                continue
+            finally:
+                cur.close()
+        print("%s -> %s" % (path, newpath))
+
+
+def rename_episodes(con, dryrun=False):
+    for idEpisode, title, season, episode, show, idFile, filename, filepath \
+            in con.execute(
+            "SELECT idEpisode, episode.c00, episode.c12, episode.c13, "
+            "tvshow.c00, idFile, strFilename, strPath FROM episode JOIN "
+            "tvshow USING (idShow) JOIN files USING (idFile) JOIN path USING "
+            " (idPath)"):
+
+        fileext = os.path.splitext(filename)[1]
+        # Only '/' and NUL invalid on ext filesystem
+        # Assuming NUL character wouldn't be in title
+        newfilename = ("%s S%02iE%02i - %s%s" % (
+            show, int(season), int(episode), title, fileext)).replace('/', '_')
+        if filename == newfilename:
+            # No need to rename
+            continue
+        fullfilepath = os.path.join(filepath, filename)
+        newfullfilepath = os.path.join(filepath, newfilename)
+        if os.path.exists(newfullfilepath):
+            print("New file path exists: %s -> %s" % (
+                  fullfilepath, newfullfilepath), file=sys.stderr)
+            continue
+
+        # Check for dry run.
+        if not dryrun:
+            try:
+                # Attempt rename
+                os.rename(fullfilepath, newfullfilepath)
+            except OSError:
+                print("Error renaming file: %s -> %s" % (
+                      fullfilepath, newfullfilepath), file=sys.stderr)
+                continue
+
+            cur = con.cursor()
+            try:
+                # Update filename in files table
+                cur.execute(
+                    "UPDATE files SET strFilename=? WHERE idFile=?",
+                    (newfilename, idFile))
+                # Update filepath in episode table
+                cur.execute(
+                    "UPDATE episode SET c18=? WHERE idEpisode=?",
+                    (newfullfilepath, idEpisode))
+                con.commit()
+            except sqlite3.Error:
+                print("Error updating database: %s -> %s" % (
+                      fullfilepath, newfullfilepath), file=sys.stderr)
+                con.rollback()
+                try:
+                    # Attempt to undo rename
+                    os.rename(newfullfilepath, fullfilepath)
+                except OSError:
+                    raise RuntimeError(
+                        "Database not updated and error undoing rename: "
+                        "%s -> %s" % (fullfilepath, newfullfilepath))
+                continue
+            finally:
+                cur.close()
+        # Only output rename when successful.
+        print("%s -> %s" % (fullfilepath, newfullfilepath))
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="kodi-file-renamer",
+        description="Rename files based on Kodi database. "
+        "List of changed files output to stdout. Any errors will be "
+        "printed to stderr but program should exit normally unless file "
+        "renames and database are left in state of not matching any more; in "
+        "this worse case the program will quit immediately with exit code 3.",
+        epilog="Copyright (C) 2015  Steven Hiscocks. "
+        "This program comes with ABSOLUTELY NO WARRANTY. This program is "
+        "distributed under the GNU Public License GPL v3.")
+    parser.add_argument('-V', '--version', action='version',
+                        version="%%(prog)s %s" % __version__)
+    parser.add_argument(
+        '-n', '--dry-run', dest='dryrun', action='store_true',
+        help="Don't actually rename any files or update the database, "
+        "just output files which would be renamed")
+    parser.add_argument('MyVideoDb', help="Kodi MyVideosXX.db file")
+    args = parser.parse_args()
+
+    if not os.path.isfile(args.MyVideoDb):
+        print("Db file doesn't exist", file=sys.stderr)
+        sys.exit(1)
+    elif not os.access(args.MyVideoDb, os.W_OK) and not args.dryrun:
+        print("Db file doesn't have write access", file=sys.stderr)
+        sys.exit(1)
+
+    con = sqlite3.connect(args.MyVideoDb)
+    try:
+        rename_movies(con, args.dryrun)
+        rename_tvshows(con, args.dryrun)
+        rename_episodes(con, args.dryrun)
+    except RuntimeError as e:
+        print(e, file=sys.stderr)
+        sys.exit(3)
+    finally:
+        con.close()
