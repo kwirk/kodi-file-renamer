@@ -21,11 +21,11 @@ import sys
 import os
 import sqlite3
 
-__version__ = '1.0'
+__version__ = '2.0'
 __license__ = 'GPLv3'
 
 
-def rename_movies(con, dryrun=False):
+def rename_movies(con, excludepaths=None, dryrun=False):
     for idMovie, title, year, idFile, filename, filepath in con.execute(
             "SELECT idMovie, c00, c07, idFile, strFilename, strPath FROM "
             "movie JOIN files USING (idFile) JOIN path USING (idPath)"):
@@ -38,6 +38,9 @@ def rename_movies(con, dryrun=False):
             # No need to rename
             continue
         fullfilepath = os.path.join(filepath, filename)
+        if excludepaths and any(fullfilepath.startswith(excludepath)
+                for excludepath in excludepaths):
+            continue
         newfullfilepath = os.path.join(filepath, newfilename)
         if os.path.exists(newfullfilepath):
             print("New file path exists: %s -> %s" % (
@@ -83,12 +86,15 @@ def rename_movies(con, dryrun=False):
         print("%s -> %s" % (fullfilepath, newfullfilepath))
 
 
-def rename_tvshows(con, dryrun=False):
+def rename_tvshows(con, excludepaths=None, dryrun=False):
     for idShow, title, idPath, path in con.execute(
             "SELECT idShow, c00, idPath, strPath FROM tvshow JOIN "
             "tvshowlinkpath USING (idShow) JOIN path USING (idPath)"):
 
         path = os.path.normpath(path)
+        if excludepaths and any(path.startswith(excludepath)
+                for excludepath in excludepaths):
+            continue
         basepath, endpath = os.path.split(path)
         # Only '/' and NUL invalid on ext filesystem
         # Assuming NUL character wouldn't be in title
@@ -147,7 +153,7 @@ def rename_tvshows(con, dryrun=False):
         print("%s -> %s" % (path, newpath))
 
 
-def rename_episodes(con, dryrun=False):
+def rename_episodes(con, excludepaths=None, dryrun=False):
     for idEpisode, title, season, episode, show, idFile, filename, filepath \
             in con.execute(
             "SELECT idEpisode, episode.c00, episode.c12, episode.c13, "
@@ -164,6 +170,9 @@ def rename_episodes(con, dryrun=False):
             # No need to rename
             continue
         fullfilepath = os.path.join(filepath, filename)
+        if excludepaths and any(fullfilepath.startswith(excludepath)
+                for excludepath in excludepaths):
+            continue
         newfullfilepath = os.path.join(filepath, newfilename)
         if os.path.exists(newfullfilepath):
             print("New file path exists: %s -> %s" % (
@@ -227,6 +236,9 @@ if __name__ == "__main__":
         '-n', '--dry-run', dest='dryrun', action='store_true',
         help="Don't actually rename any files or update the database, "
         "just output files which would be renamed")
+    parser.add_argument(
+        '-e', '--exclude-path', dest='excludepaths', action='append',
+        metavar="PATH", help="Path to exclude, as a prefix.")
     parser.add_argument('MyVideoDb', help="Kodi MyVideosXX.db file")
     args = parser.parse_args()
 
@@ -239,9 +251,9 @@ if __name__ == "__main__":
 
     con = sqlite3.connect(args.MyVideoDb)
     try:
-        rename_movies(con, args.dryrun)
-        rename_tvshows(con, args.dryrun)
-        rename_episodes(con, args.dryrun)
+        rename_movies(con, args.excludepaths, args.dryrun)
+        rename_tvshows(con, args.excludepaths, args.dryrun)
+        rename_episodes(con, args.excludepaths, args.dryrun)
     except RuntimeError as e:
         print(e, file=sys.stderr)
         sys.exit(3)
