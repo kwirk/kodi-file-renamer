@@ -21,201 +21,84 @@ import sys
 import os
 import sqlite3
 
-__version__ = '2.0'
+__version__ = '3.0'
 __license__ = 'GPLv3'
 
 
-def rename_movies(con, excludepaths=None, dryrun=False):
-    for idMovie, title, year, idFile, filename, filepath in con.execute(
-            "SELECT idMovie, c00, c07, idFile, strFilename, strPath FROM "
-            "movie JOIN files USING (idFile) JOIN path USING (idPath)"):
-
-        fileext = os.path.splitext(filename)[1]
+def rename(con, select, updates, fnameformat, excludepaths=None, dryrun=False):
+    for row in con.execute(select):
         # Only '/' and NUL invalid on ext filesystem
         # Assuming NUL character wouldn't be in title
-        newfilename = ("%s (%s)%s" % (title, year, fileext)).replace('/', '_')
-        if filename == newfilename:
+        newfname = fnameformat.format(**row).replace('/', '_')
+        if 'strFilename' in row.keys():
+            fname = row['strFilename']
+            newfname += os.path.splitext(fname)[1]
+            basepath = os.path.normpath(row['strPath'])
+        else:
+            basepath, fname = os.path.split(os.path.normpath(row['strPath']))
+        fullpath = os.path.join(basepath, fname)
+        newfullpath = os.path.join(basepath, newfname)
+
+        if fname == newfname:
             # No need to rename
             continue
-        fullfilepath = os.path.join(filepath, filename)
-        if excludepaths and any(fullfilepath.startswith(excludepath)
-                for excludepath in excludepaths):
+        if any(fullpath.startswith(excludepath)
+               for excludepath in excludepaths):
+            # Excluded
             continue
-        newfullfilepath = os.path.join(filepath, newfilename)
-        if os.path.exists(newfullfilepath):
-            print("New file path exists: %s -> %s" % (
-                fullfilepath, newfullfilepath), file=sys.stderr)
+        if os.path.exists(newfullpath):
+            print("New file exists: %s -> %s" % (
+                fullpath, newfullpath), file=sys.stderr)
             continue
 
         # Check for dry run.
         if not dryrun:
             try:
                 # Attempt rename
-                os.rename(fullfilepath, newfullfilepath)
+                os.rename(fullpath, newfullpath)
             except OSError:
-                print("Error renaming file: %s -> %s" % (
-                      fullfilepath, newfullfilepath), file=sys.stderr)
-                continue
-
-            cur = con.cursor()
-            try:
-                # Update filename in files table
-                cur.execute(
-                    "UPDATE files SET strFilename=? WHERE idFile=?",
-                    (newfilename, idFile))
-                # Update filepath in movie table
-                cur.execute(
-                    "UPDATE movie SET c22=? WHERE idMovie=?",
-                    (newfullfilepath, idMovie))
-                con.commit()
-            except sqlite3.Error:
-                print("Error updating database: %s -> %s" % (
-                    fullfilepath, newfullfilepath), file=sys.stderr)
-                con.rollback()
-                try:
-                    # Attempt to undo rename
-                    os.rename(newfullfilepath, fullfilepath)
-                except OSError:
-                    raise RuntimeError(
-                        "Database not updated and error undoing rename: "
-                        "%s -> %s" % (fullfilepath, newfullfilepath))
-                continue
-            finally:
-                cur.close()
-        # Only output rename when successful.
-        print("%s -> %s" % (fullfilepath, newfullfilepath))
-
-
-def rename_tvshows(con, excludepaths=None, dryrun=False):
-    for idShow, title, idPath, path in con.execute(
-            "SELECT idShow, c00, idPath, strPath FROM tvshow JOIN "
-            "tvshowlinkpath USING (idShow) JOIN path USING (idPath)"):
-
-        path = os.path.normpath(path)
-        if excludepaths and any(path.startswith(excludepath)
-                for excludepath in excludepaths):
-            continue
-        basepath, endpath = os.path.split(path)
-        # Only '/' and NUL invalid on ext filesystem
-        # Assuming NUL character wouldn't be in title
-        newendpath = title.replace('/', '_')
-        if endpath == newendpath:
-            # No need to rename
-            continue
-        newpath = os.path.join(basepath, newendpath)
-        if os.path.exists(newpath):
-            print("New folder exists: %s -> %s" % (path, newpath),
-                  file=sys.stderr)
-            continue
-
-        # Check for dry run.
-        if not dryrun:
-            try:
-                # Attempt rename
-                os.rename(path, newpath)
-            except OSError:
-                print("Error renaming folder: %s -> %s" % (path, newpath),
+                print("Error renaming: {} -> {}".format(fullpath, newfullpath),
                       file=sys.stderr)
                 continue
 
             cur = con.cursor()
             try:
-                # Update path in path table
-                # Use os.path.join to add trailing slash
-                cur.execute(
-                    "UPDATE path SET strPath=? WHERE idPath=?",
-                    (os.path.join(newpath, ''), idPath))
-                # Update path for episodes in path table
-                cur.execute(
-                    "UPDATE path SET strPath = REPLACE(strPath, ?, ?) WHERE "
-                    "idPath IN (SELECT idPath FROM files JOIN episode USING "
-                    "(idFile) WHERE idShow = ?)",
-                    (path, newpath, idShow))
-                # Update filepath text for episodes
-                cur.execute("UPDATE episode SET c18 = REPLACE(c18, ?, ?) "
-                            "WHERE idShow = ?",
-                            (path, newpath, idShow))
+                if 'strFilename' in row.keys():  # File
+                    # Update fname in files table
+                    cur.execute(
+                        "UPDATE files SET strFilename=? WHERE idFile=?",
+                        (newfname, row['idFile']))
+                    for update in updates:
+                        # Update path in table
+                        cur.execute(update, (newfullpath, row['id']))
+                else:  # Dir
+                    # Update path in path table
+                    # Use os.path.join to add trailing slash
+                    cur.execute(
+                        "UPDATE path SET strPath=? WHERE idPath=?",
+                        (os.path.join(newfullpath, ''), row['idPath']))
+                    for update in updates:
+                        # Update path for episodes in path table
+                        cur.execute(update, (fullpath, newfullpath, row['id']))
                 con.commit()
             except sqlite3.Error:
-                print("Error updating database: %s -> %s" % (path, newpath),
-                      file=sys.stderr)
                 con.rollback()
                 try:
                     # Attempt to undo rename
-                    os.rename(newpath, path)
+                    os.rename(newfullpath, fullpath)
                 except OSError:
                     raise RuntimeError(
                         "Database not updated and error undoing rename: "
-                        "%s -> %s" % (path, newpath))
-                continue
+                        "{} -> {}".format(fullpath, newfullpath))
+                else:
+                    print("Error updating database, undoing rename: {} -> {}"
+                          .format(fullpath, newfullpath), file=sys.stderr)
+                    continue
             finally:
                 cur.close()
-        print("%s -> %s" % (path, newpath))
+        # Only output rename when successful (or dryrun).
+        print("%s -> %s" % (fullpath, newfullpath))
 
-
-def rename_episodes(con, excludepaths=None, dryrun=False):
-    for idEpisode, title, season, episode, show, idFile, filename, filepath \
-            in con.execute(
-            "SELECT idEpisode, episode.c00, episode.c12, episode.c13, "
-            "tvshow.c00, idFile, strFilename, strPath FROM episode JOIN "
-            "tvshow USING (idShow) JOIN files USING (idFile) JOIN path USING "
-            " (idPath)"):
-
-        fileext = os.path.splitext(filename)[1]
-        # Only '/' and NUL invalid on ext filesystem
-        # Assuming NUL character wouldn't be in title
-        newfilename = ("%s S%02iE%02i - %s%s" % (
-            show, int(season), int(episode), title, fileext)).replace('/', '_')
-        if filename == newfilename:
-            # No need to rename
-            continue
-        fullfilepath = os.path.join(filepath, filename)
-        if excludepaths and any(fullfilepath.startswith(excludepath)
-                for excludepath in excludepaths):
-            continue
-        newfullfilepath = os.path.join(filepath, newfilename)
-        if os.path.exists(newfullfilepath):
-            print("New file path exists: %s -> %s" % (
-                  fullfilepath, newfullfilepath), file=sys.stderr)
-            continue
-
-        # Check for dry run.
-        if not dryrun:
-            try:
-                # Attempt rename
-                os.rename(fullfilepath, newfullfilepath)
-            except OSError:
-                print("Error renaming file: %s -> %s" % (
-                      fullfilepath, newfullfilepath), file=sys.stderr)
-                continue
-
-            cur = con.cursor()
-            try:
-                # Update filename in files table
-                cur.execute(
-                    "UPDATE files SET strFilename=? WHERE idFile=?",
-                    (newfilename, idFile))
-                # Update filepath in episode table
-                cur.execute(
-                    "UPDATE episode SET c18=? WHERE idEpisode=?",
-                    (newfullfilepath, idEpisode))
-                con.commit()
-            except sqlite3.Error:
-                print("Error updating database: %s -> %s" % (
-                      fullfilepath, newfullfilepath), file=sys.stderr)
-                con.rollback()
-                try:
-                    # Attempt to undo rename
-                    os.rename(newfullfilepath, fullfilepath)
-                except OSError:
-                    raise RuntimeError(
-                        "Database not updated and error undoing rename: "
-                        "%s -> %s" % (fullfilepath, newfullfilepath))
-                continue
-            finally:
-                cur.close()
-        # Only output rename when successful.
-        print("%s -> %s" % (fullfilepath, newfullfilepath))
 
 if __name__ == "__main__":
     import argparse
@@ -250,11 +133,61 @@ if __name__ == "__main__":
         sys.exit(1)
 
     con = sqlite3.connect(args.MyVideoDb)
+    con.row_factory = sqlite3.Row
     try:
-        rename_movies(con, args.excludepaths, args.dryrun)
-        rename_tvshows(con, args.excludepaths, args.dryrun)
-        rename_episodes(con, args.excludepaths, args.dryrun)
-    except RuntimeError as e:
+        rename(  # Movies
+            con,
+            "SELECT idMovie AS id, c00 AS title, c07 AS year, idFile, "
+            "strFilename, strPath FROM movie "
+            "JOIN files USING (idFile) "
+            "JOIN path USING (idPath)",
+            ["UPDATE movie SET c22=? WHERE idMovie=?"],
+            "{title} ({year})",
+            args.excludepaths,
+            args.dryrun,
+            )
+
+        rename(  # TV Shows
+            con,
+            "SELECT idShow AS id, c00 AS title, idPath, strPath FROM tvshow "
+            "JOIN tvshowlinkpath USING (idShow) "
+            "JOIN path USING (idPath)",
+            ["UPDATE path SET strPath = REPLACE(strPath, ?, ?) WHERE "
+             "idPath IN (SELECT idPath FROM files JOIN episode USING "
+             "(idFile) WHERE idShow = ?)",
+             "UPDATE episode SET c18 = REPLACE(c18, ?, ?) WHERE idShow = ?"],
+            "{title}",
+            args.excludepaths,
+            args.dryrun,
+            )
+
+        rename(  # Episodes
+            con,
+            "SELECT idEpisode AS id, episode.c00 AS title, "
+            "CAST(episode.c12 AS INTEGER) AS season, "
+            "CAST(episode.c13 AS INTEGER) AS episode, "
+            "tvshow.c00 AS show, idFile, strFilename, strPath FROM episode "
+            "JOIN tvshow USING (idShow) "
+            "JOIN files USING (idFile) "
+            "JOIN path USING (idPath)",
+            ["UPDATE episode SET c18=? WHERE idEpisode=?"],
+            "{show} S{season:02d}E{episode:02d} - {title}",
+            args.excludepaths,
+            args.dryrun,
+            )
+
+        rename(  # Music Videos
+            con,
+            "SELECT idMVideo AS id, c00 AS title, c10 AS artist, idFile, "
+            "strFilename, strPath FROM musicvideo "
+            "JOIN files USING (idFile) "
+            "JOIN path USING (idPath)",
+            ["UPDATE musicvideo SET c13=? WHERE idMVideo=?"],
+            "{artist} - {title}",
+            args.excludepaths,
+            args.dryrun,
+            )
+    except Exception as e:
         print(e, file=sys.stderr)
         sys.exit(3)
     finally:
