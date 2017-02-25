@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # kodi-file-renamer - Rename files based on Kodi database.
-# Copyright (C) 2015  Steven Hiscocks
+# Copyright (C) 2015-2017  Steven Hiscocks
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -21,7 +21,7 @@ import sys
 import os
 import sqlite3
 
-__version__ = '3.0'
+__version__ = '4.0'
 __license__ = 'GPLv3'
 
 
@@ -110,7 +110,7 @@ if __name__ == "__main__":
         "printed to stderr but program should exit normally unless file "
         "renames and database are left in state of not matching any more; in "
         "this worse case the program will quit immediately with exit code 3.",
-        epilog="Copyright (C) 2015  Steven Hiscocks. "
+        epilog="Copyright (C) 2015-2017  Steven Hiscocks. "
         "This program comes with ABSOLUTELY NO WARRANTY. This program is "
         "distributed under the GNU Public License GPL v3.")
     parser.add_argument('-V', '--version', action='version',
@@ -137,8 +137,9 @@ if __name__ == "__main__":
     try:
         rename(  # Movies
             con,
-            "SELECT idMovie AS id, c00 AS title, c07 AS year, idFile, "
-            "strFilename, strPath FROM movie "
+            "SELECT idMovie AS id, c00 AS title, "
+            "substr(premiered,1,4) AS year, idFile, strFilename, strPath "
+            "FROM movie "
             "JOIN files USING (idFile) "
             "JOIN path USING (idPath)",
             ["UPDATE movie SET c22=? WHERE idMovie=?"],

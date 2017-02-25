@@ -5,7 +5,7 @@ Rename files based on _Kodi_ database. Currently only works with the _MyVideo_ d
 
 This is designed around pretty basic file layout (e.g. single file per video; no stacking; no subfolders; no NFO files; no artwork files; etc.) where only _Kodi_ scrapers are used to get meta data. Therefore this may break on complex file layouts.
 
-Currently file name changes for movies are in format "_title_ (_year_)", TV show folders "_title_" and episodes "_showtitle_ S_xx_E_xx_ - _episodetitle_".
+Currently file name changes for movies are in format "_title_ (_year_)", TV show folders "_title_" and episodes "_showtitle_ SxxExx - _episodetitle_".
 
 Keep sure a backup is made of the database before using.
 Use the `--dry-run` option to see what changes will be made.
