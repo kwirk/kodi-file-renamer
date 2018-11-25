@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #
 # kodi-file-renamer - Rename files based on Kodi database.
-# Copyright (C) 2015-2017  Steven Hiscocks
+# Copyright (C) 2015-2018  Steven Hiscocks
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -19,17 +19,22 @@
 from __future__ import print_function
 import sys
 import os
+import re
 import sqlite3
 
-__version__ = '4.0'
+__version__ = '5.0'
 __license__ = 'GPLv3'
 
 
-def rename(con, select, updates, fnameformat, excludepaths=None, dryrun=False):
+def rename(con, select, updates, fnameformat, excludepaths=None,
+           simplifyfilenames=False, dryrun=False):
     for row in con.execute(select):
         # Only '/' and NUL invalid on ext filesystem
         # Assuming NUL character wouldn't be in title
         newfname = fnameformat.format(**row).replace('/', '_')
+        # And then further simplify if requested.
+        if simplifyfilenames:
+            newfname = re.sub('[<>:"\\|?*\x01-\x1f]', '', newfname)
         if 'strFilename' in row.keys():
             fname = row['strFilename']
             newfname += os.path.splitext(fname)[1]
@@ -122,6 +127,10 @@ if __name__ == "__main__":
     parser.add_argument(
         '-e', '--exclude-path', dest='excludepaths', action='append',
         metavar="PATH", help="Path to exclude, as a prefix.")
+    parser.add_argument(
+        '-s', '--simplify-filenames', dest='simplifyfilenames',
+        action='store_true',
+        help="Simplify filenames suitable for Microsoft OS/filesystem.")
     parser.add_argument('MyVideoDb', help="Kodi MyVideosXX.db file")
     args = parser.parse_args()
 
@@ -145,6 +154,7 @@ if __name__ == "__main__":
             ["UPDATE movie SET c22=? WHERE idMovie=?"],
             "{title} ({year})",
             args.excludepaths,
+            args.simplifyfilenames,
             args.dryrun,
             )
 
@@ -159,6 +169,7 @@ if __name__ == "__main__":
              "UPDATE episode SET c18 = REPLACE(c18, ?, ?) WHERE idShow = ?"],
             "{title}",
             args.excludepaths,
+            args.simplifyfilenames,
             args.dryrun,
             )
 
@@ -174,6 +185,7 @@ if __name__ == "__main__":
             ["UPDATE episode SET c18=? WHERE idEpisode=?"],
             "{show} S{season:02d}E{episode:02d} - {title}",
             args.excludepaths,
+            args.simplifyfilenames,
             args.dryrun,
             )
 
@@ -186,6 +198,7 @@ if __name__ == "__main__":
             ["UPDATE musicvideo SET c13=? WHERE idMVideo=?"],
             "{artist} - {title}",
             args.excludepaths,
+            args.simplifyfilenames,
             args.dryrun,
             )
     except Exception as e:
