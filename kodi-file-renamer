@@ -22,7 +22,7 @@ import os
 import re
 import sqlite3
 
-__version__ = '5.0'
+__version__ = '5.1'
 __license__ = 'GPLv3'
 
 
@@ -153,7 +153,7 @@ if __name__ == "__main__":
             "JOIN path USING (idPath)",
             ["UPDATE movie SET c22=? WHERE idMovie=?"],
             "{title} ({year})",
-            args.excludepaths,
+            args.excludepaths or [],
             args.simplifyfilenames,
             args.dryrun,
             )
@@ -168,7 +168,7 @@ if __name__ == "__main__":
              "(idFile) WHERE idShow = ?)",
              "UPDATE episode SET c18 = REPLACE(c18, ?, ?) WHERE idShow = ?"],
             "{title}",
-            args.excludepaths,
+            args.excludepaths or [],
             args.simplifyfilenames,
             args.dryrun,
             )
@@ -184,7 +184,7 @@ if __name__ == "__main__":
             "JOIN path USING (idPath)",
             ["UPDATE episode SET c18=? WHERE idEpisode=?"],
             "{show} S{season:02d}E{episode:02d} - {title}",
-            args.excludepaths,
+            args.excludepaths or [],
             args.simplifyfilenames,
             args.dryrun,
             )
@@ -197,7 +197,7 @@ if __name__ == "__main__":
             "JOIN path USING (idPath)",
             ["UPDATE musicvideo SET c13=? WHERE idMVideo=?"],
             "{artist} - {title}",
-            args.excludepaths,
+            args.excludepaths or [],
             args.simplifyfilenames,
             args.dryrun,
             )
