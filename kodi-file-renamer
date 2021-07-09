@@ -22,7 +22,7 @@ import os
 import re
 import sqlite3
 
-__version__ = '5.1'
+__version__ = '5.2'
 __license__ = 'GPLv3'
 
 
@@ -39,10 +39,13 @@ def rename(con, select, updates, fnameformat, excludepaths=None,
             fname = row['strFilename']
             newfname += os.path.splitext(fname)[1]
             basepath = os.path.normpath(row['strPath'])
+            fullpath = os.path.join(basepath, fname)
+            newfullpath = os.path.join(basepath, newfname)
         else:
             basepath, fname = os.path.split(os.path.normpath(row['strPath']))
-        fullpath = os.path.join(basepath, fname)
-        newfullpath = os.path.join(basepath, newfname)
+            # Keep trailing slash
+            fullpath = os.path.join(basepath, fname, '')
+            newfullpath = os.path.join(basepath, newfname, '')
 
         if fname == newfname:
             # No need to rename
